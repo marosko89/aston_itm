@@ -2,7 +2,24 @@
 
 ## Project Overview
 
-This project processes airport and flight data using Apache Spark, specifically focusing on calculating metrics, filtering data, and identifying the most recent flight updates.
+This project is focused on processing airport and flight data using Apache Spark. It loads data from two JSON files, `adsb.json` and `oag.json`, calculates metrics like average speed and delayed flights, and displays the latest flight updates.
+
+## Project Structure
+
+```Bash
+.
+├── data/
+│   ├── adsb.json             # Original JSON file for ADS-B data
+│   └── oag.json              # Original JSON file for OAG data
+├── src/
+│   ├── data_processing.py    # Data loading, transformation, and processing functions
+│   ├── metrics.py            # Functions to calculate metrics (e.g., delays, average speed)
+│   └── utils.py              # Helper functions (e.g., error handling, logging)
+├── main.py                   # Main script to run the data processing pipeline
+├── README.md                 # Project documentation and instructions
+├── requirements.txt          # Dependencies
+└── Pipfile                   # Pipenv configuration
+```
 
 ## Requirements
 
@@ -10,103 +27,80 @@ This project processes airport and flight data using Apache Spark, specifically 
 - Apache Spark (PySpark 3.5)
 - Jupyter Notebook (optional, for interactive use)
 
-## Initialize Spark session
+## Installation
 
-```Python
-pyspark
+Install dependencies using pipenv or pip:
+
+1. To install dependencies with pipenv run: `pipenv install`
+2. Or, to install from `requirements.txt` using `pip` run: `pip install -r requirements.txt`
+
+
+## Running the Application
+
+To run the data processing pipeline, execute the main script as follows:
+```Bash
+    python main.py
 ```
 
-## Airport and Flight Data Processing
+### Expected Output
+Upon running `main.py`, the program loads and processes the flight data, computing the following  
+key outputs:
 
-```Python
-# Load datasets
-adsb_df = spark.read.option("multiLine", "true").json("adsb.json")
-raw_df = spark.read.option("multiLine", "true").json("oag.json")
+1. **Average Speed by Origin** - Displays the average speed for flights from each origin airport.
 
-# Dispalay the schema + show data
-adsb_df.printSchema()
-adsb_df.show(28)
-
-# Explode and expand data fields
-from pyspark.sql.functions import explode
-exploded_df = raw_df.select(explode("data").alias("flight_data"))
-oag_df = exploded_df.select("flight_data.*")
-oag_df.show()
-oag_df.first().aircraftType
-
-# Data Cleaning
-## Remove records with missing essential fields
-# adsb_df_clean = adsb_df.dropna(subset=["RadarId"])
-
-
-# 3.a: Compute Average Speed for each airport
-from pyspark.sql.functions import avg
-avg_speed_df = adsb_df.groupBy("Origin").agg(avg("speed")).alias("avg_speed")
-avg_speed_df.show()
-
-# 3.b: Calculate the Total Number of delayed flights
-status_details_exploded = oag_df.select("statusDetails")\
-    .selectExpr("explode(statusDetails) as status_detail")
-
-# Filter for arrival & departure delays
-from pyspark.sql import functions as F
-arrival_delays = status_details_exploded\
-    .filter(F.col("status_detail.arrival.actualTime.inGateTimeliness") == "Delayed")
-departure_delays = status_details_exploded\
-    .filter(F.col("status_detail.departure.actualTime.outGateTimeliness") == "Delayed")
-arrival_delays.count()
-departure_delays.count()
-
-print(f"Total Number of Delayed Flights:\nArrival: {arrival_delays.count()}\nDeparture: {departure_delays.count()}")
+```
++------+---------+
+|Origin|avg_speed|
++------+---------+
+|   GUA|    170.0|
+|   DOH|    250.0|
+|   SGN|    234.2|
+|   IAD|    170.0|
++------+---------+
 
 ```
 
-## Filter and transform a DataFrame by applying a window function (Spark partitioning):
-
-```Python
-
-# Rename Flight to FlightID
-adsb_df = adsb_df.withColumnRenamed("Flight", "FlightId")
-
-from pyspark.sql import Window
-from pyspark.sql.functions import row_number, desc,from_unixtime, col
-
-# Define a window specification to get the latest entry for each FlightId
-window_spec = Window.partitionBy("FlightId").orderBy(desc("LastUpdate"))
-df_with_row_number = adsb_df.withColumn("row_num", row_number().over(window_spec))
-
-# Convert 'LastUpdate' column from UNIX timestamp to a human-readable format
-df_with_row_number = df_with_row_number.withColumn("LastUpdate", from_unixtime(col("LastUpdate"), "yyyy-MM-dd HH:mm"))
-
-# Filter to keep only the latest entry: NEW, FRESH
-# (Filter the DataFrame to retain only the most recent entry 
-# (the one with the largest LastUpdate) for each FlightId.)
-filtered_df = df_with_row_number.filter(df_with_row_number["row_num"] == 1)
-result_df = filtered_df.select("FlightId", "LastUpdate")
-
-# Show the final filtred DF containing only the FlightId and the corresponding latest LastUpdate .
-result_df.show(truncate=False)
-
-# Show the final DF containing only the FlightId and the corresponding latest LastUpdate .
-df_with_row_number.select("FlightId", "LastUpdate").show(30)
-
-## Verification
-from pyspark.sql.functions import max
-
-latest_update_adsb_df = (
-    adsb_df.groupBy("FlightId")  # Group by Flight
-    .agg(max("LastUpdate").alias("LastUpdate"))  # Find the max LastUpdate in each group
-    .join(adsb_df, ["FlightId", "LastUpdate"])  # Join back to get full row details
-    .select("FlightId", "LastUpdate")  # Select required columns
-)
-latest_update_adsb_df = latest_update_adsb_df.withColumn("LastUpdate", from_unixtime(col("LastUpdate"), "yyyy-MM-dd HH:mm"))
-latest_update_adsb_df.show()
+2. **Total Delayed Flights** - Calculates the total number of delayed flights for arrivals and departures.
 ```
+Total Delayed Flights: Arrival: 4, Departure: 5
+```
+
+3. **Latest Flight Updates** - Shows the latest update for each flight, with columns for `FlightId` and `LastUpdate` (timestamp formatted as `yyyy-MM-dd HH:mm`).
+
+```
+Latest Flight Updates:
++--------+----------------+
+|FlightId|      LastUpdate|
++--------+----------------+
+|  AAL476|2023-10-03 18:36|
+|   BA484|2023-10-03 01:47|
+|  LXJ476|2023-10-03 18:25|
+|   QR476|2023-10-03 01:12|
++--------+----------------+
+```
+
+4. **Flight Updates Table** - A detailed table with all updates for each `FlightId`.
+
+```
+Flight Updates Table:
++--------+----------------+
+|FlightId|      LastUpdate|
++--------+----------------+
+|   BA484|2023-10-02 22:27|
+|   BA484|2023-10-02 22:37|
+|   BA484|2023-10-02 22:53|
+...
+```
+
+## Additional Notes
+
+**Data**: Ensure that `adsb.json` and `oag.json` are located in the data/ folder before running the script.
 
 ## Suggestions for improvement
 
-- Load paging
-- Define schema for nested JSON (The schema will include `StructType` and `ArrayType`)
+- Implement data paging for large datasets.
+- Define a structured schema for the JSON files to handle nested data more efficiently.
+- Enhance error handling and logging for better tracking and maintenance.
 
 ### Generate requirements.txt output from lock file
 
